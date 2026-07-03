@@ -1,6 +1,6 @@
 # pi-retry-empty
 
-A Pi extension that **retries empty and transient-error model responses**.
+A Pi extension that **retries empty model responses**.
 
 Some providers/models occasionally return an empty assistant turn — no text, no
 tool call, zero output tokens, and `stopReason: "stop"` with no error. Pi's agent
