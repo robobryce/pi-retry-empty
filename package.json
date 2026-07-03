@@ -1,0 +1,36 @@
+{
+  "name": "pi-retry-empty",
+  "version": "0.1.0",
+  "description": "Pi extension that retries empty model responses (no text/tool-call, zero output tokens, clean stop) a bounded number of times instead of silently ending the run.",
+  "author": "Bryce Adelstein Lelbach",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.mjs"
+  },
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-coding-agent",
+    "retry",
+    "reliability"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/extension.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-agent-core": "*",
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-agent-core": { "optional": true },
+    "@earendil-works/pi-ai": { "optional": true },
+    "@earendil-works/pi-coding-agent": { "optional": true }
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  }
+}
