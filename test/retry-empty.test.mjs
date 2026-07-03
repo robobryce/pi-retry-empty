@@ -1,58 +1,71 @@
-// Tests for pi-retry-empty: the empty-turn detector and the bounded retry loop.
+// Tests for pi-retry-empty: empty-turn + transient-error detection and the
+// bounded retry loop.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import registerRetryEmptyExtension, {
 	isEmptyAssistantTurn,
+	isTransientErrorTurn,
+	retryReason,
 	lastAssistant,
 } from "../src/extension.ts";
 
-// ── detection ────────────────────────────────────────────────────────────────
+// ── empty detection ──────────────────────────────────────────────────────────
 
 test("detects an empty assistant turn (no content, zero tokens, clean stop)", () => {
-	assert.equal(
-		isEmptyAssistantTurn({ role: "assistant", content: [], stopReason: "stop", usage: { totalTokens: 0, output: 0 } }),
-		true,
-	);
-	// whitespace-only text still counts as empty
-	assert.equal(
-		isEmptyAssistantTurn({ role: "assistant", content: [{ type: "text", text: "  \n" }], stopReason: "stop", usage: { totalTokens: 0 } }),
-		true,
-	);
-	// null stopReason (some providers) also counts
-	assert.equal(
-		isEmptyAssistantTurn({ role: "assistant", content: [], stopReason: null, usage: { output: 0 } }),
-		true,
-	);
+	assert.equal(isEmptyAssistantTurn({ role: "assistant", content: [], stopReason: "stop", usage: { totalTokens: 0, output: 0 } }), true);
+	assert.equal(isEmptyAssistantTurn({ role: "assistant", content: [{ type: "text", text: "  \n" }], stopReason: "stop", usage: { totalTokens: 0 } }), true);
+	assert.equal(isEmptyAssistantTurn({ role: "assistant", content: [], stopReason: null, usage: { output: 0 } }), true);
 });
 
-test("does NOT flag a real turn", () => {
-	// has text + tokens
-	assert.equal(
-		isEmptyAssistantTurn({ role: "assistant", content: [{ type: "text", text: "hi" }], stopReason: "stop", usage: { totalTokens: 5, output: 5 } }),
-		false,
-	);
-	// has a tool call
-	assert.equal(
-		isEmptyAssistantTurn({ role: "assistant", content: [{ type: "toolCall" }], stopReason: "toolUse", usage: { totalTokens: 9, output: 9 } }),
-		false,
-	);
-	// tool-use stop reason is not our case
-	assert.equal(
-		isEmptyAssistantTurn({ role: "assistant", content: [], stopReason: "toolUse" }),
-		false,
-	);
+test("does NOT flag a real turn as empty", () => {
+	assert.equal(isEmptyAssistantTurn({ role: "assistant", content: [{ type: "text", text: "hi" }], stopReason: "stop", usage: { totalTokens: 5, output: 5 } }), false);
+	assert.equal(isEmptyAssistantTurn({ role: "assistant", content: [{ type: "toolCall" }], stopReason: "toolUse", usage: { totalTokens: 9, output: 9 } }), false);
+	assert.equal(isEmptyAssistantTurn({ role: "assistant", content: [], stopReason: "toolUse" }), false);
 });
 
-test("does NOT flag an error turn (Pi retries those itself)", () => {
-	assert.equal(
-		isEmptyAssistantTurn({ role: "assistant", content: [], stopReason: "error", errorMessage: "boom", usage: { totalTokens: 0 } }),
-		false,
-	);
+// ── transient-error detection ────────────────────────────────────────────────
+
+test("detects retryable transient errors (429, 5xx, rate limit, connection)", () => {
+	for (const err of [
+		"429 status code (no body)",
+		"429 litellm.RateLimitError: RateLimitError",
+		"503 Service Unavailable",
+		"overloaded_error",
+		"fetch failed",
+		"stream ended before message_stop",
+		"socket hang up",
+		"connection reset before headers",
+	]) {
+		assert.equal(isTransientErrorTurn({ role: "assistant", stopReason: "error", errorMessage: err, content: [] }), true, `should retry: ${err}`);
+	}
 });
 
-test("non-assistant / missing messages are not empty turns", () => {
-	assert.equal(isEmptyAssistantTurn(undefined), false);
-	assert.equal(isEmptyAssistantTurn({ role: "user", content: [] }), false);
+test("does NOT retry permanent errors (auth, quota, bad request)", () => {
+	for (const err of [
+		"401 Unauthorized",
+		"invalid api key",
+		"insufficient_quota",
+		"Monthly usage limit reached",
+		"available balance is too low",
+		"400 invalid request",
+	]) {
+		assert.equal(isTransientErrorTurn({ role: "assistant", stopReason: "error", errorMessage: err, content: [] }), false, `should NOT retry: ${err}`);
+	}
+});
+
+test("a non-error turn is not a transient error", () => {
+	assert.equal(isTransientErrorTurn({ role: "assistant", stopReason: "stop", content: [{ type: "text", text: "ok" }] }), false);
+	assert.equal(isTransientErrorTurn({ role: "assistant", stopReason: "error", errorMessage: "", content: [] }), false);
+});
+
+test("retryReason classifies correctly", () => {
+	assert.equal(retryReason({ role: "assistant", stopReason: "error", errorMessage: "429 status code (no body)", content: [] }), "transient-error");
+	assert.equal(retryReason({ role: "assistant", stopReason: "stop", content: [], usage: { totalTokens: 0 } }), "empty");
+	assert.equal(retryReason({ role: "assistant", stopReason: "stop", content: [{ type: "text", text: "done" }], usage: { totalTokens: 3 } }), null);
+	assert.equal(retryReason({ role: "assistant", stopReason: "error", errorMessage: "401 Unauthorized", content: [] }), null);
+});
+
+test("lastAssistant finds the last assistant message", () => {
 	assert.equal(lastAssistant([{ role: "user" }]), undefined);
 	assert.equal(lastAssistant([{ role: "user" }, { role: "assistant", content: [] }]).role, "assistant");
 });
@@ -72,36 +85,47 @@ function mockPi(flagValue = "3") {
 }
 
 const emptyMsg = { role: "assistant", content: [], stopReason: "stop", usage: { totalTokens: 0, output: 0 } };
+const errMsg = { role: "assistant", content: [], stopReason: "error", errorMessage: "429 status code (no body)", usage: { totalTokens: 0 } };
+const permErr = { role: "assistant", content: [], stopReason: "error", errorMessage: "401 Unauthorized", usage: { totalTokens: 0 } };
 const realMsg = { role: "assistant", content: [{ type: "text", text: "done" }], stopReason: "stop", usage: { totalTokens: 4, output: 4 } };
 
 test("retries an empty turn up to maxRetries, then stops", async () => {
 	const { pi, handlers, sends } = mockPi("3");
 	registerRetryEmptyExtension(pi);
 	handlers.session_start();
-
-	// Simulate 5 consecutive empty turns; only 3 retries should fire.
 	for (let i = 0; i < 5; i++) await handlers.agent_end({ messages: [emptyMsg] });
-	assert.equal(sends.length, 3, "capped at maxRetries=3");
+	assert.equal(sends.length, 3);
 	assert.equal(sends[0].opts.triggerTurn, true);
 	assert.equal(sends[0].opts.deliverAs, "followUp");
 	assert.equal(sends[0].msg.display, false);
 });
 
-test("does not retry a real turn", async () => {
-	const { pi, handlers, sends } = mockPi("3");
-	registerRetryEmptyExtension(pi);
-	handlers.session_start();
-	await handlers.agent_end({ messages: [realMsg] });
-	assert.equal(sends.length, 0);
-});
-
-test("a real turn resets the retry budget", async () => {
+test("retries a transient 429 error turn (with backoff)", async () => {
 	const { pi, handlers, sends } = mockPi("2");
 	registerRetryEmptyExtension(pi);
 	handlers.session_start();
-	await handlers.agent_end({ messages: [emptyMsg] }); // retry 1
-	await handlers.agent_end({ messages: [emptyMsg] }); // retry 2 (cap)
-	await handlers.agent_end({ messages: [emptyMsg] }); // no retry (budget spent)
+	const t0 = Date.now();
+	await handlers.agent_end({ messages: [errMsg] });
+	assert.equal(sends.length, 1, "429 error is retried");
+	assert.ok(Date.now() - t0 >= 1900, "transient-error retry waited ~backoff (2s)");
+	assert.match(sends[0].msg.content, /transient error/i);
+});
+
+test("does NOT retry a permanent error", async () => {
+	const { pi, handlers, sends } = mockPi("3");
+	registerRetryEmptyExtension(pi);
+	handlers.session_start();
+	await handlers.agent_end({ messages: [permErr] });
+	assert.equal(sends.length, 0);
+});
+
+test("does not retry a real turn; a real turn resets the budget", async () => {
+	const { pi, handlers, sends } = mockPi("2");
+	registerRetryEmptyExtension(pi);
+	handlers.session_start();
+	await handlers.agent_end({ messages: [emptyMsg] }); // 1
+	await handlers.agent_end({ messages: [emptyMsg] }); // 2 (cap)
+	await handlers.agent_end({ messages: [emptyMsg] }); // none
 	assert.equal(sends.length, 2);
 	await handlers.agent_end({ messages: [realMsg] });  // resets
 	await handlers.agent_end({ messages: [emptyMsg] }); // retry again
@@ -113,5 +137,6 @@ test("maxRetries=0 disables retrying entirely", async () => {
 	registerRetryEmptyExtension(pi);
 	handlers.session_start();
 	await handlers.agent_end({ messages: [emptyMsg] });
+	await handlers.agent_end({ messages: [errMsg] });
 	assert.equal(sends.length, 0);
 });
