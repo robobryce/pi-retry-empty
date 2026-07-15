@@ -5,9 +5,26 @@
   "author": "Bryce Adelstein Lelbach",
   "license": "MIT",
   "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
   "scripts": {
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm test",
     "test": "node --experimental-strip-types --test test/*.test.mjs"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/robobryce/pi-retry-empty.git"
+  },
+  "homepage": "https://github.com/robobryce/pi-retry-empty#readme",
+  "bugs": {
+    "url": "https://github.com/robobryce/pi-retry-empty/issues"
+  },
+  "files": [
+    "src/**/*.ts",
+    "README.md"
+  ],
   "keywords": [
     "pi-package",
     "pi",
@@ -31,6 +48,8 @@
     "@earendil-works/pi-coding-agent": { "optional": true }
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "*"
+    "@earendil-works/pi-coding-agent": "0.80.2",
+    "@types/node": "^22",
+    "typescript": "^5.6"
   }
 }

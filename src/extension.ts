@@ -18,7 +18,7 @@
  * caps retries per run so it can't loop forever.
  */
 
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { AgentEndEvent, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 /** Max empty-response retries per run. Overridable via the --retry-empty flag. */
 const DEFAULT_MAX_RETRIES = 3;
@@ -79,9 +79,9 @@ export default function registerRetryEmptyExtension(pi: ExtensionAPI): void {
 		retries = 0;
 	});
 
-	pi.on("agent_end", async (event: { messages?: AssistantMessage[] }, _ctx: ExtensionContext) => {
+	pi.on("agent_end", async (event: AgentEndEvent) => {
 		if (maxRetries <= 0) return;
-		const last = lastAssistant(event.messages ?? []);
+		const last = lastAssistant(event.messages as AssistantMessage[]);
 		if (!isEmptyAssistantTurn(last)) {
 			// A real (non-empty) turn resets the budget for later independent stalls.
 			retries = 0;
